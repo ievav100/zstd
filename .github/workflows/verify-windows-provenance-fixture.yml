@@ -1,0 +1,91 @@
+name: Verify Windows release provenance fixture
+on:
+  push:
+    branches: [codex/test-zstd-windows-provenance]
+    paths: [.github/workflows/verify-windows-provenance-fixture.yml]
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE_TAG: v0.0.0-fixture
+
+jobs:
+  build-fixture:
+    if: github.repository == 'ievav100/zstd'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    strategy:
+      matrix:
+        ziparch: [win32, win64, win-arm64]
+    steps:
+      - name: Create a synthetic ZIP
+        shell: bash
+        env:
+          ZIPARCH: ${{ matrix.ziparch }}
+        run: |
+          printf '%s\n' "Synthetic zstd provenance fixture for $ZIPARCH at $GITHUB_SHA" > fixture.txt
+          zip -q "zstd-$FIXTURE_TAG-$ZIPARCH.zip" fixture.txt
+          sha256sum "zstd-$FIXTURE_TAG-$ZIPARCH.zip"
+
+      - name: Stage fixture ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # tag=v7.0.2
+        with:
+          name: release-windows-${{ matrix.ziparch }}
+          path: zstd-${{ env.FIXTURE_TAG }}-${{ matrix.ziparch }}.zip
+          compression-level: 0
+          if-no-files-found: error
+
+  publish-fixture:
+    if: github.repository == 'ievav100/zstd'
+    needs: build-fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # tag=v8.0.2
+        with:
+          pattern: release-windows-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Select the release ZIPs
+        id: archives
+        shell: bash
+        run: |
+          export GITHUB_REF_NAME="$FIXTURE_TAG"
+          archives=()
+          for platform in win32 win64 win-arm64; do
+            archive="release-artifacts/zstd-${GITHUB_REF_NAME}-${platform}.zip"
+            test -s "$archive"
+            archives+=("$archive")
+          done
+
+          {
+            echo 'paths<<EOF'
+            printf '%s\n' "${archives[@]}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest Windows release ZIPs
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # tag=v4.2.2
+        with:
+          subject-path: ${{ steps.archives.outputs.paths }}
+
+      - name: Verify signatures against the fork workflow and source commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_PATHS: ${{ steps.archives.outputs.paths }}
+        run: |
+          mapfile -t archives <<< "$ARCHIVE_PATHS"
+          test "${#archives[@]}" -eq 3
+          for archive in "${archives[@]}"; do
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/verify-windows-provenance-fixture.yml" \
+              --source-digest "$GITHUB_SHA"
+          done
