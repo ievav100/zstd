@@ -59,10 +59,10 @@ jobs:
           original_tag=$RELEASE_TAG
           GITHUB_REF_NAME=ci-verify-zstd-no-overwrite-20261125
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha)" = "$BUILD_HEAD"
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag   --title 'CI-only zstd partial upload verification'   --notes 'Unpublished fixture. This draft contains test copies of the original verified zstd packages.'   --repo "$GITHUB_REPOSITORY"
-          draft_id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
-          test -n "$draft_id"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" --jq '.draft and (.assets|length == 0)')" = true
+          draft_id=458390322
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id")
+          jq -e --arg tag "$GITHUB_REF_NAME" '.draft and .published_at == null and .tag_name == $tag and (.assets | length == 0)' <<< "$release" > /dev/null
+          printf 'Verified empty unpublished draft %s for %s.\n' "$draft_id" "$GITHUB_REF_NAME"
           paths=()
           for platform in win32 win64 win-arm64; do
               path="release-artifacts/zstd-${GITHUB_REF_NAME}-${platform}.zip"
@@ -120,6 +120,7 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" --jq '.draft and (.assets|length == 3)')" = true
           after=$(gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" --jq ".assets[] | select(.name == \"${paths[0]##*/}\") | {id,name,digest}")
           test "$seed" = "$after"
+          printf 'Existing asset retained: %s\n' "$after"
           GITHUB_OUTPUT=$(mktemp)
           ARCHIVE_PATHS=$all_paths
           preflight
