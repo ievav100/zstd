@@ -1,11 +1,8 @@
-name: windows-artifacts
+name: Verify native Windows release attestations
 
 on:
   push:
-    branches: [ test_artifacts, win_artifacts, release ]
-  release:
-    types:
-      - published
+    branches: [ ci-verify-real-windows-provenance ]
 
 permissions:
   contents: read
@@ -128,7 +125,6 @@ jobs:
           Compress-Archive -Path "zstd-${{ github.ref_name }}-${{ matrix.ziparch }}" -DestinationPath "zstd-${{ github.ref_name }}-${{ matrix.ziparch }}.zip" -CompressionLevel Optimal
 
       - name: Stage Windows ZIP for release
-        if: github.event_name == 'release'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # tag=v7.0.2
         with:
           name: release-windows-${{ matrix.ziparch }}
@@ -136,12 +132,12 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  publish-windows-artifacts:
-    if: github.event_name == 'release'
+  verify-windows-artifacts:
+    if: github.repository == 'ievav100/zstd'
     needs: windows-artifacts
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
 
@@ -174,11 +170,17 @@ jobs:
         with:
           subject-path: ${{ steps.archives.outputs.paths }}
 
-      - name: Upload release ZIPs
+      - name: Verify native archive attestations
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           ARCHIVE_PATHS: ${{ steps.archives.outputs.paths }}
         run: |
           mapfile -t archives <<< "$ARCHIVE_PATHS"
-          gh release upload "$GITHUB_REF_NAME" "${archives[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          test "${#archives[@]}" -eq 3
+          for archive in "${archives[@]}"; do
+            sha256sum "$archive"
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/windows-artifacts.yml" \
+              --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          done
