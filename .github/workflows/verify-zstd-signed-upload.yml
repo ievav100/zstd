@@ -1,0 +1,70 @@
+name: Verify zstd signed package upload
+
+on:
+  push:
+    branches: [ci-verify-zstd-signed-upload-20261125]
+
+permissions: {}
+
+jobs:
+  upload:
+    if: github.repository == 'ievav100/zstd'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_TAG: ci-verify-zstd-draft-20261125
+      BUILD_HEAD: 81decba7bef763d5996b84560b8408327a2ec4d9
+    steps:
+      - name: Download the signed packages from the original Windows builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # tag=v8.0.2
+        with:
+          run-id: 45647088882
+          github-token: ${{ github.token }}
+          pattern: release-windows-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Select and verify the three previously attested ZIPs
+        id: archives
+        shell: bash
+        run: |
+          archives=()
+          for platform in win32 win64 win-arm64; do
+            archive="release-artifacts/zstd-${RELEASE_TAG}-${platform}.zip"
+            test -s "$archive"
+            archives+=("$archive")
+          done
+
+          # These SHA-256 values were checked independently against the
+          # attestation recorded by the original Windows publisher job.
+          sha256sum --check --strict <<CHECKSUMS
+          d9f5329e33f1909643d629f569be4a9d2822bbe1f09d5ae64f22d3e87fd6b358  ${archives[0]}
+          67187e82bfad9973e88b03e7d8a404f3f51e07815e329e88aa9ae356468c0c7d  ${archives[1]}
+          d5725b23cd1a37ad5cfbb2784d9095f038124bf7771eefb8ff01f2f966759636  ${archives[2]}
+          CHECKSUMS
+
+          {
+            echo 'paths<<EOF'
+            printf '%s\n' "${archives[@]}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify draft release upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_PATHS: ${{ steps.archives.outputs.paths }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)" = "$BUILD_HEAD"
+          gh release create "$RELEASE_TAG" --draft --verify-tag \
+            --title 'CI-only zstd Windows release verification' \
+            --notes 'Unpublished fork fixture for Windows package and signature verification.' \
+            --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,assets --jq '.isDraft and (.assets | length == 0)')" = true
+          mapfile -t archives <<< "$ARCHIVE_PATHS"
+          gh release upload "$RELEASE_TAG" "${archives[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,assets --jq '.isDraft and (.assets | length == 3)')" = true
