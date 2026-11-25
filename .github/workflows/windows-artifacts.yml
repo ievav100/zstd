@@ -1,17 +1,15 @@
-name: windows-artifacts
+name: Verify zstd draft Windows release
 
 on:
   push:
-    branches: [ test_artifacts, win_artifacts, release ]
-  release:
-    types:
-      - published
+    branches: [ci-verify-zstd-draft-20261125]
 
 permissions:
   contents: read
 
 jobs:
   windows-artifacts:
+    if: github.repository == 'ievav100/zstd'
     # For msys2, see https://ariya.io/2020/07/on-github-actions-with-msys2
     runs-on: ${{ matrix.shell == 'cmake' && 'windows-11-arm' || 'windows-latest' }}
     strategy:
@@ -128,7 +126,6 @@ jobs:
           Compress-Archive -Path "zstd-${{ github.ref_name }}-${{ matrix.ziparch }}" -DestinationPath "zstd-${{ github.ref_name }}-${{ matrix.ziparch }}.zip" -CompressionLevel Optimal
 
       - name: Stage Windows ZIP for release
-        if: github.event_name == 'release'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # tag=v7.0.2
         with:
           name: release-windows-${{ matrix.ziparch }}
@@ -137,7 +134,7 @@ jobs:
           if-no-files-found: error
 
   publish-windows-artifacts:
-    if: github.event_name == 'release'
+    if: github.repository == 'ievav100/zstd'
     needs: windows-artifacts
     runs-on: ubuntu-latest
     permissions:
@@ -180,5 +177,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARCHIVE_PATHS: ${{ steps.archives.outputs.paths }}
         run: |
+          gh release create "$GITHUB_REF_NAME" --draft --target "$GITHUB_SHA" --title 'CI-only zstd Windows release verification' --notes 'Unpublished fork fixture for Windows package and signature verification.' --repo "$GITHUB_REPOSITORY"
+          test "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
           mapfile -t archives <<< "$ARCHIVE_PATHS"
           gh release upload "$GITHUB_REF_NAME" "${archives[@]}" --clobber --repo "$GITHUB_REPOSITORY"
